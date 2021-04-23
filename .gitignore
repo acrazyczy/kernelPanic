@@ -1,0 +1,9 @@
+/.idea
+/build
+/cmake-build-debug
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+*.xdv
