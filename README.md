@@ -1,2 +1,4 @@
-# kernelPanic
-MS110 homework in ACM 2019 class, five projects for fun
+# acmOS-spr21
+acmOS-spr21
+
+Enjoy!
