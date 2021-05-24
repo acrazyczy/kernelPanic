@@ -22,8 +22,8 @@ execute_process(
         OUTPUT_VARIABLE C_COMPILER_INCLUDE
 )
 
-set(CMAKE_C_FLAGS_RELEASE "-O1 -g2")
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
+set(CMAKE_C_FLAGS_RELEASE "-O2 -g2")
+set(CMAKE_C_FLAGS_DEBUG "-O1 -g")
 
 set(CMAKE_C_FLAGS
         "-Werror -Wall -O -fno-omit-frame-pointer -ggdb -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib")
