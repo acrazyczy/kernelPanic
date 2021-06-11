@@ -15,7 +15,7 @@ static uint64 kernel_page_available[INIT_MAX_PAGES] = {0};
 void kern_page_init() {
     allocated_page = 0;
     for (int i = 0; i < INIT_MAX_PAGES; ++i)
-        kernel_page_available[i] = (uint64)(&kernel_page_initialized[i * BUDDY_PAGE_SIZE]);
+        kernel_page_available[i] = (uint64)(&kernel_page_initialized[i]);
 }
 
 void kern_page_test() {
@@ -27,7 +27,7 @@ void kern_page_test() {
     if((uint64) addr2 < (uint64) kernel_page_initialized) FAIL_FMT("kern_page_malloc: %s\n", "return address invalid");
     kern_page_free(addr2);
     printk("Page address: %lx\n", addr2);
-//    ASSERT_EQ(addr, addr2, "kernel page test address");
+    ASSERT_EQ(addr, addr2, "kernel page test address");
 }
 
 uint64 TEST_buddy_get_page_counts();

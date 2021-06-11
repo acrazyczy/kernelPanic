@@ -25,11 +25,13 @@
 #define BD_BLOCK_SIZE(k) ((1L << (k)) * BD_LEAF_SIZE)
 
 #define BD_PAGE_IN_USE (1L)
+#define BD_PAGE_FREE (1L << 1)
 
 
 void mm_init();
 void uart_memory_init();
 void* mm_kalloc();
+void mm_kfree(void* ptr);
 
 // Kernel Memory Function
 void kern_page_init();
