@@ -1,5 +1,7 @@
 #include <defs.h>
 #include <riscv.h>
+#include <process.h>
+#include <memlayout.h>
 extern void kernelvec();
 extern int devintr();
 void usertrapret();
@@ -7,7 +9,7 @@ void usertrapret();
 void trap_init_vec(){
     // Only 1 LoC
     // 将kernelvec作为内核中断处理基地址写入stvec向量。
-
+	w_stvec((uint64)kernelvec);
 }
 // 真实的 syscall 处理过程
 // 根据你在 user/stdlib.h 中的 syscall 操作在这里对应地寻找目标
@@ -28,9 +30,21 @@ void usertrap(void) {
      * 完成处理，进入到trap后半部分处理函数
      */
 
+    thread_t *t = mythread();
+
+    // save user's PC
+    t -> trapframe -> epc = r_sepc();
 
     if (r_scause() == 8) {
         // system call
+
+        if (t -> killed) sys_exit(-1);
+
+        // sepc points to the ecall instruction
+        t -> trapframe -> epc += 4;
+
+        intr_on();
+
         syscall();
     } else if ((which_dev = devintr()) != 0) {
         // ok
@@ -39,12 +53,15 @@ void usertrap(void) {
         BUG_FMT("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     }
 
+    if (t -> killed) sys_exit(-1);
 
     // 处理时钟中断：重新调度
-    if (which_dev == 2) ;
+    if (which_dev == 2) sys_yield();
     // 进入 trap 后半处理函数
     usertrapret();
 }
+
+extern char trampoline[], usertrap1[], usertrap2[];
 
 // Trap 后半处理函数
 void usertrapret() {
@@ -57,5 +74,38 @@ void usertrapret() {
      * 切换页表
      * 跳转到二进制代码还原现场的部分
      */
-    
+
+    thread_t *t = mythread();
+
+    // switch off interrupt until we are truly back to user space
+    intr_off();
+
+	w_stvec(TRAMPOLINE + (usertrap1 - trampoline));
+
+	// set up trapframe values that uservec will need when re-entering the kernel
+	t -> trapframe -> kernel_satp = r_satp();
+	t -> trapframe -> kernel_sp = t -> kstack + PGSIZE;
+	t -> trapframe -> kernel_trap = (uint64) usertrap1;
+	t -> trapframe -> kernel_hartid = r_tp();
+
+	// set up the registers that tramp.S's sret will use to get to user space.
+
+	// set S Previous Privilege mode to user.
+	unsigned long x = r_sstatus();
+	x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
+	x |= SSTATUS_SPIE; // enable interrupts in user mode
+	w_sstatus(x);
+
+	// set sepc to the previously saved user program counter
+	w_sepc(t -> trapframe -> epc);
+
+	// tell tramp.S the user page table to switch to
+	uint64 satp = MAKE_SATP(t -> process -> pagetable);
+
+	// jump to tramp.S at the top of memory, which
+	// switches to the user page table, restores user registers,
+	// and switches to user mode with sret
+
+	uint64 fn = TRAMPOLINE + (usertrap2 - trampoline);
+	((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
 }

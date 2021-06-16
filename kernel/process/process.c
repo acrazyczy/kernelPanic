@@ -4,6 +4,7 @@
 #include "elf.h"
 
 extern const char binary_putc_start;
+cpu_t CPUs[NCPU];
 thread_t *running[NCPU];
 struct list_head sched_list[NCPU];
 struct lock pidlock, tidlock, schedlock;
@@ -118,4 +119,34 @@ void proc_init(){
     if(!load_thread(PUTC)) BUG("Load failed");
 }
 
+cpu_t *mycpu() {return CPUs + cpuid();}
 
+void push_off()
+{
+	int old = intr_get();
+
+	intr_off();
+	if(mycpu() -> noff == 0)
+		mycpu() -> intena = old;
+	++ mycpu() -> noff;
+}
+
+void pop_off()
+{
+	cpu_t *c = mycpu();
+	if(intr_get())
+		BUG("pop_off - interruptible");
+	if(c -> noff < 1)
+		BUG("pop_off");
+	-- c -> noff;
+	if(c -> noff == 0 && c -> intena)
+		intr_on();
+}
+
+thread_t *mythread() {
+	push_off();
+	int id = cpuid();
+	thread_t *t = running[id];
+	pop_off();
+	return t;
+}
