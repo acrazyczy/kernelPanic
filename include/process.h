@@ -128,4 +128,6 @@ thread_t *mythread();
 cpu_t *mycpu();
 void push_off();
 void pop_off();
+void yield();
+void sched();
 #endif  // ACMOS_SPR21_PROCESS_H

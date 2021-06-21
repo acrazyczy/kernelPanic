@@ -177,4 +177,10 @@ struct list {
     struct list *prev;
 };
 
+// swtch.S
+
+struct context;
+
+void swtch(struct context*, struct context*);
+
 #endif  // ACMOS_SPR21_DEFS_H

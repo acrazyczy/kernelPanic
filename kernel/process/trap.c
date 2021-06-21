@@ -56,7 +56,7 @@ void usertrap(void) {
     if (t -> killed) sys_exit(-1);
 
     // 处理时钟中断：重新调度
-    if (which_dev == 2) sys_yield();
+    if (which_dev == 2) yield();
     // 进入 trap 后半处理函数
     usertrapret();
 }

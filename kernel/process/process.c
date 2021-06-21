@@ -92,7 +92,23 @@ bool sched_empty(){
 
 // 开始运行某个特定的函数
 void thread_run(thread_t *target){
+	thread_t *t;
+	cpu_t *c = mycpu();
+	uint cid = (c - CPUs) / sizeof(cpu_t);
+	running[cid] = NULL;
 
+	intr_on();
+
+	acquire(&t -> lock);
+	ASSERT_EQ(t -> thread_state, RUNNABLE, "unrunnable thread found in sched_list");
+	t -> thread_state = RUNNING;
+	sched_dequeue();
+	running[cid] = t;
+
+	swtch(&c -> context, &t -> context);
+
+	running[cid] = NULL;
+	release(&t -> lock);
 }
 
 // sched_start函数启动调度，按照调度的队列开始运行。
@@ -121,32 +137,33 @@ void proc_init(){
 
 cpu_t *mycpu() {return CPUs + cpuid();}
 
-void push_off()
-{
-	int old = intr_get();
-
-	intr_off();
-	if(mycpu() -> noff == 0)
-		mycpu() -> intena = old;
-	++ mycpu() -> noff;
-}
-
-void pop_off()
-{
-	cpu_t *c = mycpu();
-	if(intr_get())
-		BUG("pop_off - interruptible");
-	if(c -> noff < 1)
-		BUG("pop_off");
-	-- c -> noff;
-	if(c -> noff == 0 && c -> intena)
-		intr_on();
-}
-
 thread_t *mythread() {
 	push_off();
 	int id = cpuid();
 	thread_t *t = running[id];
 	pop_off();
 	return t;
+}
+
+void yield() {
+	thread_t *t = mythread();
+	acquire(&t -> lock);
+	t -> thread_state = RUNNABLE;
+	sched_enqueue(t);
+	sched();
+	release(&t -> lock);
+}
+
+void sched() {
+	int intena;
+	thread_t *t = mythread();
+
+	if (!holding_lock(&t -> lock)) BUG("sched p -> lock");
+	if (mycpu() -> noff != 1) BUG("sched locks");
+	if (t -> thread_state == RUNNABLE) BUG("sched running");
+	if (intr_get()) BUG("sched interruptible");
+
+	intena = mycpu() -> intena;
+	swtch(&t -> context, &mycpu() -> context);
+	mycpu() -> intena = intena;
 }

@@ -5,6 +5,29 @@
 #ifndef ACMOS_SPR21_ANSWER_LOCKS_H
 #define ACMOS_SPR21_ANSWER_LOCKS_H
 
+#include "process.h"
+
+void push_off()
+{
+	int old = intr_get();
+
+	intr_off();
+	if(mycpu() -> noff == 0)
+		mycpu() -> intena = old;
+	++ mycpu() -> noff;
+}
+
+void pop_off()
+{
+	cpu_t *c = mycpu();
+	if(intr_get())
+		BUG("pop_off - interruptible");
+	if(c -> noff < 1)
+		BUG("pop_off");
+	-- c -> noff;
+	if(c -> noff == 0 && c -> intena)
+		intr_on();
+}
 
 int lock_init(struct lock *lock){
 	/* Your code here */
@@ -16,7 +39,9 @@ int lock_init(struct lock *lock){
 
 void acquire(struct lock *lock){
 	/* Your code here */
-	while (__sync_lock_test_and_set(&lock -> locked, 1)) {}
+	push_off();
+	if (holding_lock(lock)) BUG("The lock is already held.");
+	while (__sync_lock_test_and_set(&lock -> locked, 1));
 	__sync_synchronize();
 	lock -> cpuid = cpuid();
 }
@@ -25,6 +50,7 @@ void acquire(struct lock *lock){
 // Return 0 if succeed, -1 if failed.
 int try_acquire(struct lock *lock){
 	/* Your code here */
+	if (holding_lock(lock)) BUG("The lock is already held.");
 	if (!__sync_lock_test_and_set(&lock -> locked, 1)) {
 		__sync_synchronize();
 		lock -> cpuid = cpuid();
@@ -38,7 +64,7 @@ void release(struct lock* lock){
 		lock -> cpuid = -1;
 		__sync_synchronize();
 		__sync_lock_release(&lock -> locked);
-	} else BUG("The lock isn't held by current process.");
+	} else BUG("The lock isn't held by current processor.");
 }
 
 int is_locked(struct lock* lock){
