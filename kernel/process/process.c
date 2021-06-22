@@ -10,13 +10,14 @@ struct list_head sched_list[NCPU];
 struct lock pidlock, tidlock, schedlock;
 int _pid, _tid;
 
+static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uint64 offset, uint64 sz);
 
 // 将ELF文件映射到给定页表的地址空间，返回pc的数值
 // 关于 ELF 文件，请参考：https://docs.oracle.com/cd/E19683-01/816-1386/chapter6-83432/index.html
 static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
 	struct elf_file *elf;
     int i;
-    uint64 seg_sz, p_vaddr, seg_map_sz;
+    uint64 seg_sz, p_vaddr, seg_map_sz, current_sz = 0;
 	elf = elf_parse_file(bin);
 	
 	/* load each segment in the elf binary */
@@ -36,10 +37,25 @@ static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
              * 通过 memcpy 将某一段复制进入这一块空间
              * 页表映射修改
              */
+            if (seg_sz < elf -> p_headers[i].p_filesz || p_vaddr % PGSIZE != 0) goto bad;
+            uint64 new_sz = pt_alloc_pages(target_page_table, current_sz, p_vaddr + seg_sz);
+            if (new_sz == 0) goto bad;
+            current_sz = new_sz;
+            load_segment(target_page_table, p_vaddr, bin, elf -> p_headers[i].p_offset, elf -> p_headers[i].p_filesz);
 		}
 	}
 	/* PC: the entry point */
 	return elf->header.e_entry;
+	bad:
+}
+
+static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uint64 offset, uint64 sz) {
+	for (uint64 i = 0;i < sz;i += PGSIZE) {
+		paddr_t pa = pt_query_address(pagetable, va + i);
+		if (pa == NULL) BUG_FMT("loadseg: invalid address 0x%lx", va + i);
+		uint64 load_sz = sz - i < PGSIZE ? sz - i : PGSIZE;
+		memcpy(pa, bin + offset + i, load_sz);
+	}
 }
 
 /* 分配一个进程，需要至少完成以下目标：

@@ -20,50 +20,100 @@ void enable_paging() {
 static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
 	if(va >= MAXVA) BUG_FMT("get va[0x%lx] >= MAXVA[0x%lx]", va, MAXVA);
 	// Suggested: 18 LoCs
-	pte_t *pte = NULL;
-	for (int i = 39;i >= 12;i -= 9) {
-		if (pte == NULL) pte = pagetable;
+	for (int level = 3;level > 0;-- level) {
+		pte_t *pte = pagetable + PX(level, va);
+		if (*pte & PTE_V) pagetable = (pagetable_t) PTE2PA(*pte);
 		else {
-			if (!(*pte & PTE_V)) {
-				pagetable_t new_pagetable = mm_kalloc();
-				memset(new_pagetable, 0, BD_LEAF_SIZE);
-				*pte = ((uint64) new_pagetable >> 12) << 10 | PTE_V;
-			}
-			pte = (pte_t*) ((*pte >> 10 & (((uint64) 1 << 44) - 1)) << 12);
+			if (!alloc || (pagetable = (pde_t*) mm_kalloc()) == 0) return 0;
+			memset(pagetable, 0, PGSIZE);
+			*pte = PA2PTE(pagetable) | PTE_V;
 		}
-		pte += (va >> i) & ((1 << 9) - 1);
-		if (!(*pte & PTE_V) && !alloc) break;
 	}
-	return /* Return value here */ pte;
+	return pagetable + PX(0, va);
 }
 
 int pt_map_pages(pagetable_t pagetable, vaddr_t va, paddr_t pa, uint64 size, int perm){
 	// Suggested: 11 LoCs
-	uint cnt = size / PGSIZE;
-	cnt += cnt * PGSIZE < size;
-	for (uint64 i = 0;i < cnt;++ i)
-		pt_map_addrs(pagetable, va + PGSIZE * i, pa + PGSIZE * i, perm);
+	vaddr_t current = PGROUNDDOWN(va), last = PGROUNDDOWN(va + size - 1);
+	for (pte_t *pte;;) {
+		if ((pte = pt_query(pagetable, current, 1)) == NULL) return -1;
+		if (*pte & PTE_V) BUG("remap");
+		*pte = PA2PTE(pa) | perm | PTE_V;
+		if (current == last) break;
+		current += PGSIZE, pa += PGSIZE;
+	}
 	return 0; // Do not modify
 }
 
 paddr_t pt_query_address(pagetable_t pagetable, vaddr_t va){
 	// Suggested: 3 LoCs
 	pte_t *pte = pt_query(pagetable, va, 0);
-	if (pte == NULL) BUG_FMT("no mapping exists for 0x%lx", va);
-	return /* Return value here */ (*pte >> 10 & (((uint64)1 << 44) - 1)) << 12 | (va & ((1 << 12) - 1));
+	if (pte == NULL || (*pte & PTE_V) == 0) {
+		FAIL_FMT("no mapping exists for 0x%lx", va);
+		return NULL;
+	}
+	if ((*pte & PTE_U) == 0) {
+		FAIL("access denied");
+		return NULL;
+	}
+	return /* Return value here */ PTE2PA(*pte);
 }
 
 int pt_unmap_addrs(pagetable_t pagetable, vaddr_t va){
 	// Suggested: 2 LoCs
 	pte_t *pte = pt_query(pagetable, va, 0);
-	if (pte == NULL) BUG_FMT("no mapping exists for 0x%lx", va);
-	else *pte = 0;
+	if (pte == NULL || (*pte & PTE_V) == 0) BUG_FMT("no mapping exists for 0x%lx", va);
+	if (PTE_FLAGS(*pte) == PTE_V) BUG_FMT("0x%lx is not a leaf", va);
+	*pte = 0;
 	return 0; // Do not modify
 }
 
 int pt_map_addrs(pagetable_t pagetable, vaddr_t va, paddr_t pa, int perm){
 	// Suggested: 2 LoCs
 	pte_t *pte = pt_query(pagetable, va, 1);
-	*pte = (pa >> 12) << 10 | perm | PTE_V;
+	if (pte == NULL) return -1;
+	*pte = PA2PTE(pa) | perm | PTE_V;
 	return 0; // Do not modify
+}
+
+void pt_unmap_pages(pagetable_t pagetable, vaddr_t va, uint npages, int do_free) {
+	pte_t *pte;
+
+	for (vaddr_t current = va;current < va + npages * PGSIZE;current += PGSIZE) {
+		if ((pte = pt_query(pagetable, current, 0)) == 0 || (*pte & PTE_V) == 0)
+			BUG_FMT("page at 0x%lx not found", current);
+		if (PTE_FLAGS(*pte) == PTE_V) BUG_FMT("0x%lx is not a leaf", current);
+		if (do_free) mm_kfree((void *) PTE2PA(*pte));
+		*pte = 0;
+	}
+}
+
+uint64 pt_dealloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
+	if (newsz >= oldsz) return oldsz;
+	if (PGROUNDUP(newsz) < PGROUNDUP(oldsz)) {
+		uint npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+		pt_unmap_pages(pagetable, PGROUNDUP(newsz), npages, 1);
+	}
+	return newsz;
+}
+
+uint64 pt_alloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
+	char *mem;
+
+	if (oldsz > newsz) return oldsz;
+
+	for (uint64 current = oldsz = PGROUNDUP(oldsz);current < newsz;current += PGSIZE) {
+		mem = mm_kalloc();
+		if (mem == NULL) {
+			pt_dealloc_pages(pagetable, current, oldsz);
+			return 0;
+		}
+		memset(mem, 0, PGSIZE);
+		if (pt_map_addrs(pagetable, current, (uint64) mem, PTE_W | PTE_X | PTE_R | PTE_U) != 0) {
+			mm_kfree(mem);
+			pt_dealloc_pages(pagetable, current, oldsz);
+			return 0;
+		}
+	}
+	return newsz;
 }

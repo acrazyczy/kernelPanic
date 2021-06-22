@@ -23,5 +23,8 @@ int pt_unmap_addrs(pagetable_t pagetable, vaddr_t va);
 int pt_map_addrs(pagetable_t pagetable, vaddr_t va, paddr_t pa, int perm);
 void enable_paging();
 paddr_t pt_query_address(pagetable_t pagetable, vaddr_t va);
+void pt_unmap_pages(pagetable_t pagetable, vaddr_t va, uint npages, int do_free);
+uint64 pt_dealloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz);
+vaddr_t pt_alloc_pages(pagetable_t pagetable, vaddr_t oldva, vaddr_t newva);
 
 #endif  // ACMOS_SPR21_PAGETABLE_H
