@@ -107,5 +107,5 @@ void usertrapret() {
 	// and switches to user mode with sret
 
 	uint64 fn = TRAMPOLINE + (usertrap2 - trampoline);
-	((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
+	((void (*)(uint64,uint64))fn)(TRAPFRAME + t -> trapframe_offset, satp);
 }

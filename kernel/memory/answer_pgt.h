@@ -117,3 +117,20 @@ uint64 pt_alloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
 	}
 	return newsz;
 }
+
+void pt_free(pagetable_t pagetable) {
+	for (int i = 0;i < PGSIZE / sizeof(pte_t);++ i) {
+		pte_t pte = pagetable[i];
+		if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+			paddr_t child = PTE2PA(pte);
+			pt_free((pagetable_t) child);
+			pagetable[i] = 0;
+		} else if (pte & PTE_V) BUG("leaf");
+	}
+	mm_kfree(pagetable);
+}
+
+void pt_free_pagetable(pagetable_t pagetable, uint64 sz) {
+	if (sz > 0) pt_unmap_pages(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
+	pt_free(pagetable);
+}

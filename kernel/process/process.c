@@ -1,13 +1,19 @@
 #include "process.h"
 #include "lock.h"
 #include "pagetable.h"
+#include "memlayout.h"
+#include "trap.c"
 #include "elf.h"
 
 extern const char binary_putc_start;
+extern char trampoline[];
 cpu_t CPUs[NCPU];
 thread_t *running[NCPU];
 struct list_head sched_list[NCPU];
+process_t procs[NPROC];
+thread_t thrs[NTHR];
 struct lock pidlock, tidlock, schedlock;
+
 int _pid, _tid;
 
 static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uint64 offset, uint64 sz);
@@ -58,6 +64,14 @@ static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uin
 	}
 }
 
+static int alloc_pid() {
+	int pid;
+	acquire(&pidlock);
+	pid = _pid ++;
+	release(&pidlock);
+	return pid;
+}
+
 /* 分配一个进程，需要至少完成以下目标：
  * 
  * 分配一个主线程
@@ -70,8 +84,88 @@ static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uin
  * 此外程序首次进入用户态之前，应该设置好trap处理向量为usertrap（或者你自定义的）
  */
 process_t *alloc_proc(const char* bin, thread_t *thr){
-    thr = NULL;
-    return NULL;
+	process_t *p = NULL; // to do: alloc p
+	acquire(&p -> lock);
+	p -> process_state = RUNNABLE;
+	p -> pid = alloc_pid();
+	init_list_head(&p -> thread_list);
+	if ((p -> trapframes = mm_kalloc()) == NULL) {
+		free_proc(p);
+		release(&p -> lock);
+		return NULL;
+	}
+	if ((p -> pagetable = proc_pagetable(p)) == NULL) {
+		free_proc(p);
+		release(&p -> lock);
+		return NULL;
+	}
+    thr = alloc_thr(bin);
+    if (thr == NULL) {
+    	free_proc(p);
+    	release(&p -> lock);
+    	return NULL;
+    }
+    thr -> process = p;
+    list_add(&thr -> process_list_thread_node, &p -> thread_list);
+	release(&thr -> lock);
+    return p;
+}
+
+static int alloc_tid() {
+	int tid;
+	acquire(&tidlock);
+	tid = _tid ++;
+	release(&tidlock);
+	return tid;
+}
+
+static void load_thread_ret() {
+	release(&mythread() -> lock);
+	usertrapret();
+}
+
+thread_t *alloc_thr(const char *bin) {
+	thread_t *t = NULL; // to do: alloc t
+	acquire(&t -> lock);
+	t -> thread_state = RUNNABLE;
+	t -> tid = alloc_tid();
+	init_list_head(&t -> process_list_thread_node);
+	init_list_head(&t -> sched_list_thread_node);
+	memset(&t -> context, 0, sizeof(t -> context));
+	t -> context.ra = (uint64) load_thread_ret;
+	t -> context.sp = t -> kstack + PGSIZE;
+	return t;
+}
+
+pagetable_t proc_pagetable(process_t *p) {
+	pagetable_t pagetable;
+	if ((pagetable = (pagetable_t) mm_kalloc()) == NULL) return NULL;
+	memset(pagetable, 0, PGSIZE);
+	if ((~pt_map_pages(pagetable, TRAMPOLINE, PGSIZE, (uint64) trampoline, PTE_R | PTE_X)) == 0) {
+		pt_free_pagetable(pagetable, 0);
+		return NULL;
+	}
+	if ((~pt_map_pages(pagetable, TRAPFRAME, PGSIZE, (uint64) p -> trapframes, PTE_R | PTE_W)) == 0) {
+		pt_unmap_pages(pagetable, TRAMPOLINE, 1, 0);
+		pt_free_pagetable(pagetable, 0);
+		return NULL;
+	}
+	return pagetable;
+}
+
+void proc_freepagetable(pagetable_t pagetable, uint64 sz) {
+	pt_unmap_pages(pagetable, TRAMPOLINE, 1, 0);
+	pt_unmap_pages(pagetable, TRAPFRAME, 1, 0);
+	pt_free_pagetable(pagetable, sz);
+}
+
+void free_proc(process_t *p) {
+	if (p -> trapframes) mm_kfree(p -> trapframes);
+	p -> trapframes = NULL;
+	if (p -> pagetable) proc_freepagetable(p -> pagetable, p -> sz);
+	p -> pagetable = NULL;
+	p -> sz = p -> pid = p -> killed = p -> xstate = 0;
+	p -> process_state = UNUSED;
 }
 
 bool load_thread(file_type_t type){
@@ -118,6 +212,10 @@ void thread_run(thread_t *target){
 	acquire(&t -> lock);
 	ASSERT_EQ(t -> thread_state, RUNNABLE, "unrunnable thread found in sched_list");
 	t -> thread_state = RUNNING;
+	acquire(&t -> process -> lock);
+	if (t -> process -> running_threads ++)
+		t -> process -> process_state = RUNNING;
+	release(&t -> process -> lock);
 	sched_dequeue();
 	running[cid] = t;
 
@@ -149,6 +247,7 @@ void proc_init(){
     lock_init(&tidlock);
     // 接下来代码期望的目的：映射第一个用户线程并且插入调度队列
     if(!load_thread(PUTC)) BUG("Load failed");
+    // to do
 }
 
 cpu_t *mycpu() {return CPUs + cpuid();}
@@ -165,6 +264,10 @@ void yield() {
 	thread_t *t = mythread();
 	acquire(&t -> lock);
 	t -> thread_state = RUNNABLE;
+	acquire(&t -> process -> lock);
+	if (-- t -> process -> running_threads == 0)
+		t -> process -> process_state = list_empty(&t -> process -> thread_list) ? UNUSED : RUNNABLE;
+	release(&t -> process -> lock);
 	sched_enqueue(t);
 	sched();
 	release(&t -> lock);

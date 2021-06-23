@@ -9,27 +9,6 @@
 #include <lock.h>
 #include <pagetable.h>
 
-typedef enum state { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE, IDLE } process_state_t;
-typedef enum file_type{PUTC} file_type_t;
-
-typedef struct process {
-    struct list_head thread_list;
-    process_state_t process_state;
-    // 以下部分请根据自己的需要自行填充
-
-    struct lock lock;
-
-    int killed;
-    int xstate;
-    int pid;
-
-	uint64 sz;
-    pagetable_t pagetable;
-} process_t;
-
-// 状态可以根据自己的需要进行修改
-typedef process_state_t thread_state_t;
-
 typedef struct trapframe {
 	/*    0 */ uint64 kernel_satp;      // kernel page table
 	/*    8 */ uint64 kernel_sp;        // top of thread's kernel stack
@@ -87,6 +66,31 @@ typedef struct context {
 	uint64 s11;
 };
 
+typedef enum state { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE, IDLE } process_state_t;
+typedef enum file_type{PUTC} file_type_t;
+
+typedef struct process {
+    struct list_head thread_list;
+    process_state_t process_state;
+    // 以下部分请根据自己的需要自行填充
+
+    struct lock lock;
+
+    int killed;
+    int xstate;
+    int pid;
+
+	uint64 sz;
+	void *trapframes;
+
+    pagetable_t pagetable;
+
+    uint running_threads;
+} process_t;
+
+// 状态可以根据自己的需要进行修改
+typedef process_state_t thread_state_t;
+
 typedef struct thread {
     struct list_head process_list_thread_node;
     thread_state_t thread_state;
@@ -102,6 +106,7 @@ typedef struct thread {
 
 	uint64 kstack;
 	uint64 sz;
+	uint64 trapframe_offset;
 	struct trapframe *trapframe;
 	struct context context;
 } thread_t;
@@ -115,6 +120,10 @@ typedef struct cpu {
 extern cpu_t CPUs[NCPU];
 
 process_t *alloc_proc(const char* bin, thread_t *thr);
+thread_t *alloc_thr(const char *bin);
+void free_proc(process_t *p);
+pagetable_t proc_pagetable(process_t *p);
+void proc_freepagetable(pagetable_t pagetable, uint64 sz);
 bool load_thread(file_type_t type);
 void sched_enqueue(thread_t *target_thread);
 thread_t *sched_dequeue();

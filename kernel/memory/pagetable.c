@@ -14,7 +14,7 @@ pagetable_t kernel_pagetable;
 
 void pt_init() {
     kernel_pagetable = (pagetable_t)mm_kalloc();
-    memset(kernel_pagetable, 0, BD_LEAF_SIZE);
+    memset(kernel_pagetable, 0, PGSIZE);
     pt_kern_vmmap();
 
     enable_paging();

@@ -33,6 +33,7 @@ typedef char bool;
 #define false (0)
 #define NULL 0
 // some constants: defined in params.h
+#define NTHR 20
 #define NPROC 10  // maximum number of processes
 #define NCPU 8  // maximum number of CPUs
 #define NOFILE 16  // open files per process
