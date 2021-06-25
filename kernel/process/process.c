@@ -20,20 +20,21 @@ static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uin
 
 // 将ELF文件映射到给定页表的地址空间，返回pc的数值
 // 关于 ELF 文件，请参考：https://docs.oracle.com/cd/E19683-01/816-1386/chapter6-83432/index.html
-static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
+static uint64 load_binary(pagetable_t *target_page_table, const char *bin, thread_t *t){
 	struct elf_file *elf;
     int i;
-    uint64 seg_sz, p_vaddr, seg_map_sz, current_sz = 0;
+    uint64 seg_sz, p_vaddr, seg_map_sz, current_sz = t -> process -> sz;
+    t -> sz = 0;
 	elf = elf_parse_file(bin);
 	
 	/* load each segment in the elf binary */
-	for (i = 0; i < elf->header.e_phnum; ++i) {
-		if (elf->p_headers[i].p_type == PT_LOAD) {
+	for (i = 0; i < elf -> header.e_phnum;++ i) {
+		if (elf -> p_headers[i].p_type == PT_LOAD) {
             // 根据 ELF 文件格式做段映射
             // 从ELF中获得这一段的段大小
-            seg_sz = elf->p_headers[i].p_memsz;
+            seg_sz = elf -> p_headers[i].p_memsz;
             // 对应段的在内存中的虚拟地址
-            p_vaddr = elf->p_headers[i].p_vaddr;
+            p_vaddr = elf -> p_headers[i].p_vaddr;
             // 对映射大小做页对齐
 			seg_map_sz = ROUNDUP(seg_sz + p_vaddr, PGSIZE) - PGROUNDDOWN(p_vaddr);
             // 接下来代码的期望目的：将程序代码映射/复制到对应的内存空间
@@ -44,15 +45,19 @@ static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
              * 页表映射修改
              */
             if (seg_sz < elf -> p_headers[i].p_filesz || p_vaddr % PGSIZE != 0) goto bad;
+            if (t -> sz < p_vaddr + seg_sz) t -> sz = p_vaddr + seg_sz;
             uint64 new_sz = pt_alloc_pages(target_page_table, current_sz, p_vaddr + seg_sz);
             if (new_sz == 0) goto bad;
             current_sz = new_sz;
             load_segment(target_page_table, p_vaddr, bin, elf -> p_headers[i].p_offset, elf -> p_headers[i].p_filesz);
 		}
 	}
+	t -> process -> sz = current_sz;
 	/* PC: the entry point */
-	return elf->header.e_entry;
+	return elf -> header.e_entry;
 	bad:
+	pt_dealloc_pages(target_page_table, current_sz, t -> process -> sz);
+	return 0;
 }
 
 static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uint64 offset, uint64 sz) {
@@ -83,31 +88,70 @@ static int alloc_pid() {
  * 这个函数传入参数为一个二进制的代码和一个线程指针(具体传入规则可以自己修改)
  * 此外程序首次进入用户态之前，应该设置好trap处理向量为usertrap（或者你自定义的）
  */
-process_t *alloc_proc(const char* bin, thread_t *thr){
-	process_t *p = NULL; // to do: alloc p
-	acquire(&p -> lock);
-	p -> process_state = RUNNABLE;
-	p -> pid = alloc_pid();
-	init_list_head(&p -> thread_list);
-	if ((p -> trapframes = mm_kalloc()) == NULL) {
+process_t *select_proc() {
+	for (process_t *p = procs;p < procs + NPROC;++ p) {
+		acquire(&p -> lock);
+		if (p -> allocated_threads != (1 << NTHRPERPROC) - 1) return p;
+		release(&p -> lock);
+	}
+	return NULL;
+}
+
+process_t *alloc_proc(const char* bin){
+	process_t *p = select_proc(); // to do: alloc p and acquire lock
+	if (p == NULL) return NULL;
+	if (p -> process_state == UNUSED) {
+		p -> pid = alloc_pid();
+		if ((p -> trapframes = mm_kalloc()) == NULL) {
+			free_proc(p);
+			release(&p -> lock);
+			return NULL;
+		}
+		if ((p -> pagetable = proc_pagetable(p)) == NULL) {
+			free_proc(p);
+			release(&p -> lock);
+			return NULL;
+		}
+		p -> maxsz = PGSIZE * 16;
+		p -> sz = 0;
+		bool succeeded = true;
+		for (uint i = 0;i < NTHRPERPROC && succeeded;++ i) {
+			void *mem = mm_kalloc();
+			if (mem == NULL) succeeded = false;
+			else {
+				pt_map_pages(p -> pagetable, PGSIZE * (15 - (i << 1)), mem, PGSIZE, PTE_W | PTE_R | PTE_X | PTE_U);
+				mem = mm_kalloc();
+				if (mem == NULL) succeeded = false;
+				else pt_map_pages(p -> pagetable, PGSIZE * (14 - (i << 1)), mem, PGSIZE, PTE_W | PTE_R | PTE_X | PTE_U);
+			}
+		}
+		if (!succeeded) {
+			free_proc(p);
+			release(&p -> lock);
+			return NULL;
+		}
+	}
+	thread_t *t = alloc_thr(bin);
+	if (t == NULL && p -> process_state == UNUSED) {
 		free_proc(p);
 		release(&p -> lock);
 		return NULL;
 	}
-	if ((p -> pagetable = proc_pagetable(p)) == NULL) {
+	if (p -> process_state == UNUSED) p -> process_state = RUNNABLE;
+	t -> process = p;
+	for (t -> ord = 0; p -> allocated_threads >> t -> ord & 1; ++ t -> ord);
+	t -> trapframe = p -> trapframes + t -> ord * sizeof(struct trapframe);
+	p -> allocated_threads |= 1 << t -> ord;
+	uint64 epc = load_binary(&p -> pagetable, bin, t);
+	if (epc == 0) {
+		release(&t -> lock);
 		free_proc(p);
 		release(&p -> lock);
 		return NULL;
 	}
-    thr = alloc_thr(bin);
-    if (thr == NULL) {
-    	free_proc(p);
-    	release(&p -> lock);
-    	return NULL;
-    }
-    thr -> process = p;
-    list_add(&thr -> process_list_thread_node, &p -> thread_list);
-	release(&thr -> lock);
+	t -> trapframe -> sp =  p -> maxsz - (PGSIZE * t -> ord << 1);
+	t -> trapframe -> epc = epc;
+	list_add(&t -> process_list_thread_node, &p -> thread_list);
     return p;
 }
 
@@ -124,13 +168,20 @@ static void load_thread_ret() {
 	usertrapret();
 }
 
-thread_t *alloc_thr(const char *bin) {
-	thread_t *t = NULL; // to do: alloc t
+thread_t *select_thr() {
+	for (thread_t *t = thrs;t < thrs + NTHR;++ t) {
+		acquire(&t -> lock);
+		if (t -> thread_state == UNUSED) return t;
+		release(&t -> lock);
+	}
+	return NULL;
+}
+
+thread_t *alloc_thr() {
+	thread_t *t = select_thr(); // to do: alloc t
 	acquire(&t -> lock);
 	t -> thread_state = RUNNABLE;
 	t -> tid = alloc_tid();
-	init_list_head(&t -> process_list_thread_node);
-	init_list_head(&t -> sched_list_thread_node);
 	memset(&t -> context, 0, sizeof(t -> context));
 	t -> context.ra = (uint64) load_thread_ret;
 	t -> context.sp = t -> kstack + PGSIZE;
@@ -146,7 +197,7 @@ pagetable_t proc_pagetable(process_t *p) {
 		return NULL;
 	}
 	if ((~pt_map_pages(pagetable, TRAPFRAME, PGSIZE, (uint64) p -> trapframes, PTE_R | PTE_W)) == 0) {
-		pt_unmap_pages(pagetable, TRAMPOLINE, 1, 0);
+		pt_unmap_pages(pagetable, TRAMPOLINE, 1, false);
 		pt_free_pagetable(pagetable, 0);
 		return NULL;
 	}
@@ -154,8 +205,8 @@ pagetable_t proc_pagetable(process_t *p) {
 }
 
 void proc_freepagetable(pagetable_t pagetable, uint64 sz) {
-	pt_unmap_pages(pagetable, TRAMPOLINE, 1, 0);
-	pt_unmap_pages(pagetable, TRAPFRAME, 1, 0);
+	pt_unmap_pages(pagetable, TRAMPOLINE, 1, false);
+	pt_unmap_pages(pagetable, TRAPFRAME, 1, false);
 	pt_free_pagetable(pagetable, sz);
 }
 
@@ -169,11 +220,14 @@ void free_proc(process_t *p) {
 }
 
 bool load_thread(file_type_t type){
-    if(type == PUTC){
-        thread_t *t = NULL;
-        process_t *p = alloc_proc(&binary_putc_start, t);
+    if(type == PUTC) {
+        process_t *p = alloc_proc(&binary_putc_start);
+	    thread_t *t = container_of(p -> thread_list.next, thread_t, process_list_thread_node);
         if(!t) return false;
+	    acquire(&schedlock);
         sched_enqueue(t);
+	    release(&schedlock);
+        return true;
     } else {
         BUG("Not supported");
     }
@@ -216,7 +270,6 @@ void thread_run(thread_t *target){
 	if (t -> process -> running_threads ++)
 		t -> process -> process_state = RUNNING;
 	release(&t -> process -> lock);
-	sched_dequeue();
 	running[cid] = t;
 
 	swtch(&c -> context, &t -> context);
@@ -243,11 +296,24 @@ void sched_init(){
 
 void proc_init(){
     // 初始化pid、tid锁
-    lock_init(&pidlock);
-    lock_init(&tidlock);
+    lock_init(&pidlock), _pid = 0;
+    lock_init(&tidlock), _tid = 0;
     // 接下来代码期望的目的：映射第一个用户线程并且插入调度队列
     if(!load_thread(PUTC)) BUG("Load failed");
-    // to do
+    for (process_t *p = procs;p < procs + NPROC;++ p) {
+	    lock_init(&p -> lock);
+	    p -> process_state = UNUSED;
+	    p -> running_threads = 0;
+	    p -> allocated_threads = 0;
+	    init_list_head(&p -> thread_list);
+    }
+    for (thread_t *t = thrs;t < thrs + NTHR;++ t) {
+    	lock_init(&t -> lock);
+    	t -> thread_state = UNUSED;
+    	t -> kstack = KSTACK((uint) (t - thrs));
+	    init_list_head(&t -> process_list_thread_node);
+	    init_list_head(&t -> sched_list_thread_node);
+    }
 }
 
 cpu_t *mycpu() {return CPUs + cpuid();}
@@ -266,7 +332,7 @@ void yield() {
 	t -> thread_state = RUNNABLE;
 	acquire(&t -> process -> lock);
 	if (-- t -> process -> running_threads == 0)
-		t -> process -> process_state = list_empty(&t -> process -> thread_list) ? UNUSED : RUNNABLE;
+		t -> process -> process_state = list_empty(&t -> process -> thread_list) ? IDLE : RUNNABLE;
 	release(&t -> process -> lock);
 	sched_enqueue(t);
 	sched();
@@ -285,4 +351,16 @@ void sched() {
 	intena = mycpu() -> intena;
 	swtch(&t -> context, &mycpu() -> context);
 	mycpu() -> intena = intena;
+}
+
+void exit(int value) {
+	thread_t *t = mythread();
+	acquire(&t -> lock);
+	t -> xstate = value;
+	t -> thread_state = ZOMBIE;
+	acquire(&t -> process -> lock);
+	list_del(&t -> process_list_thread_node);
+	release(&t -> process -> lock);
+	sched();
+	BUG("zombie exit");
 }

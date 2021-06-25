@@ -2,6 +2,11 @@
 #include <riscv.h>
 #include <process.h>
 #include <memlayout.h>
+
+#define SYS_EXIT 1
+#define SYS_PUTC 2
+#define SYS_YIELD 3
+
 extern void kernelvec();
 extern int devintr();
 void usertrapret();
@@ -14,7 +19,18 @@ void trap_init_vec(){
 // 真实的 syscall 处理过程
 // 根据你在 user/stdlib.h 中的 syscall 操作在这里对应地寻找目标
 void syscall(){
-
+	uint num;
+	asm volatile("mv %0, a7":"=r"(num)::"memory");
+	if (num == SYS_YIELD) yield();
+	else if (num == SYS_PUTC) {
+		char val;
+		asm volatile("mv %0, a0":"=r"(val)::"memory");
+		uart_putc(val);
+	} else if (num == SYS_EXIT) {
+		int value;
+		asm volatile("mv %0, a0":"=r"(value)::"memory");
+		exit(value);
+	} else BUG_FMT("unsupported syscall number: %u", num);
 }
 
 // 用户态的trap处理函数，内核态请参考 kernel/boot/start.c 中的 kernelvec
@@ -38,7 +54,7 @@ void usertrap(void) {
     if (r_scause() == 8) {
         // system call
 
-        if (t -> killed) sys_exit(-1);
+        if (t -> killed) exit(-1);
 
         // sepc points to the ecall instruction
         t -> trapframe -> epc += 4;
@@ -53,7 +69,7 @@ void usertrap(void) {
         BUG_FMT("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     }
 
-    if (t -> killed) sys_exit(-1);
+    if (t -> killed) exit(-1);
 
     // 处理时钟中断：重新调度
     if (which_dev == 2) yield();
@@ -107,5 +123,5 @@ void usertrapret() {
 	// and switches to user mode with sret
 
 	uint64 fn = TRAMPOLINE + (usertrap2 - trampoline);
-	((void (*)(uint64,uint64))fn)(TRAPFRAME + t -> trapframe_offset, satp);
+	((void (*)(uint64,uint64))fn)(TRAPFRAME + t -> ord * sizeof(struct trapframe), satp);
 }

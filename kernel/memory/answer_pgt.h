@@ -76,15 +76,17 @@ int pt_map_addrs(pagetable_t pagetable, vaddr_t va, paddr_t pa, int perm){
 	return 0; // Do not modify
 }
 
-void pt_unmap_pages(pagetable_t pagetable, vaddr_t va, uint npages, int do_free) {
+void pt_unmap_pages(pagetable_t pagetable, vaddr_t va, uint npages, bool do_free) {
 	pte_t *pte;
 
 	for (vaddr_t current = va;current < va + npages * PGSIZE;current += PGSIZE) {
 		if ((pte = pt_query(pagetable, current, 0)) == 0 || (*pte & PTE_V) == 0)
-			BUG_FMT("page at 0x%lx not found", current);
-		if (PTE_FLAGS(*pte) == PTE_V) BUG_FMT("0x%lx is not a leaf", current);
-		if (do_free) mm_kfree((void *) PTE2PA(*pte));
-		*pte = 0;
+			FAIL_FMT("page at 0x%lx not found", current);
+		else {
+			if (PTE_FLAGS(*pte) == PTE_V) BUG_FMT("0x%lx is not a leaf", current);
+			if (do_free) mm_kfree((void *) PTE2PA(*pte));
+			*pte = 0;
+		}
 	}
 }
 
@@ -109,7 +111,7 @@ uint64 pt_alloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
 			return 0;
 		}
 		memset(mem, 0, PGSIZE);
-		if (pt_map_addrs(pagetable, current, (uint64) mem, PTE_W | PTE_X | PTE_R | PTE_U) != 0) {
+		if (pt_map_pages(pagetable, current, (uint64) mem, PGSIZE, PTE_W | PTE_X | PTE_R | PTE_U) != 0) {
 			mm_kfree(mem);
 			pt_dealloc_pages(pagetable, current, oldsz);
 			return 0;
@@ -131,6 +133,6 @@ void pt_free(pagetable_t pagetable) {
 }
 
 void pt_free_pagetable(pagetable_t pagetable, uint64 sz) {
-	if (sz > 0) pt_unmap_pages(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
+	if (sz > 0) pt_unmap_pages(pagetable, 0, PGROUNDUP(sz) / PGSIZE, true);
 	pt_free(pagetable);
 }

@@ -80,12 +80,14 @@ typedef struct process {
     int xstate;
     int pid;
 
+	uint running_threads;
+	uint allocated_threads;
+
+	uint64 maxsz;
 	uint64 sz;
 	void *trapframes;
 
     pagetable_t pagetable;
-
-    uint running_threads;
 } process_t;
 
 // 状态可以根据自己的需要进行修改
@@ -106,7 +108,7 @@ typedef struct thread {
 
 	uint64 kstack;
 	uint64 sz;
-	uint64 trapframe_offset;
+	uint64 ord;
 	struct trapframe *trapframe;
 	struct context context;
 } thread_t;
@@ -119,8 +121,10 @@ typedef struct cpu {
 
 extern cpu_t CPUs[NCPU];
 
-process_t *alloc_proc(const char* bin, thread_t *thr);
-thread_t *alloc_thr(const char *bin);
+process_t *select_proc();
+process_t *alloc_proc(const char* bin);
+thread_t *select_thr();
+thread_t *alloc_thr();
 void free_proc(process_t *p);
 pagetable_t proc_pagetable(process_t *p);
 void proc_freepagetable(pagetable_t pagetable, uint64 sz);
@@ -139,4 +143,5 @@ void push_off();
 void pop_off();
 void yield();
 void sched();
+void exit(int value);
 #endif  // ACMOS_SPR21_PROCESS_H

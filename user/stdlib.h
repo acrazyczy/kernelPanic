@@ -13,15 +13,24 @@ typedef __builtin_va_list va_list;
 // 参考资料：https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
 // 注意：我们是 RISCV 架构，最后进入内核态需要 ecall 指令
 void sys_putc(char val){
-    asm volatile("":::"memory"); 
+	asm volatile(
+		"mv a7, %0\n\tmv a0, %1\n\tecall"
+		::"r"(SYS_PUTC), "r"(val):"memory"
+	);
 }
 
 void sys_exit(int value){
-    asm volatile("":::"memory"); 
+    asm volatile(
+    	"mv a7, %0\n\tmv a0, %1\n\tecall"
+    	::"r"(SYS_EXIT), "r"(value):"memory"
+    );
 }
 
 void sys_yield(){
-    asm volatile("":::"memory"); 
+	asm volatile(
+		"li a7, %0\n\tecall"
+        ::"r"(SYS_YIELD)
+	);
 }
 
 void printk_format(const char* format, va_list args) {
