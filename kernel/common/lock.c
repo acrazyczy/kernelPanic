@@ -15,7 +15,7 @@ struct lock big_kernel_lock;
 
 
 void kernel_lock_init(void){
-    lock_init(&big_kernel_lock);
+    lock_init(&big_kernel_lock, "big_kernel_lock");
 }
 void lock_kernel(void){
     acquire(&big_kernel_lock);

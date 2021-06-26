@@ -65,7 +65,7 @@ typedef char bool;
     } while (0)
 
 
-#define DEBUG(fm, ...) printk("\033[33m[debug: %s, %s:%d]: "fm"\033[0m", __func__, __FILENAME__, __LINE__, ##__VA_ARGS__);
+#define DEBUG(fm, ...) printk("\033[33m[debug: %s, %s:%d]: "fm"\033[0m", __func__, __FILENAME__, __LINE__, ##__VA_ARGS__)
 
 #define PASS_FMT(fm, ...)                                                        \
     do {                                                                         \

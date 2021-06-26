@@ -128,7 +128,7 @@ static inline uint64 r_stvec() {
 // Machine-mode interrupt vector
 static inline void w_mtvec(uint64 x) { asm volatile("csrw mtvec, %0" : : "r"(x)); }
 
-// use riscv's sv39 page table scheme.
+// use riscv's sv48 page table scheme.
 #define SATP_SV39 (8L << 60)
 #define SATP_SV48 (9L << 60)
 #define MAKE_SATP(pagetable) (SATP_SV48 | (((uint64)pagetable) >> 12))

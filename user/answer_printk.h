@@ -5,12 +5,14 @@
 #ifndef ACMOS_SPR21_ANSWER_PRINTK_H
 #define ACMOS_SPR21_ANSWER_PRINTK_H
 
+extern void sys_putc(char c);
+
 static void printk_write_string(const char *str) {
 	// Homework 1: YOUR CODE HERE
 	// this function print string by the const char pointer
 	// I think 3 lines of codes are enough, do you think so?
 	// It's easy for you, right?
-	for (;*str != '\0';++ str) uart_putc(*str);
+	for (;*str != '\0';++ str) sys_putc(*str);
 }
 
 

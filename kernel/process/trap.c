@@ -32,6 +32,7 @@ void syscall(){
 
 // 用户态的trap处理函数，内核态请参考 kernel/boot/start.c 中的 kernelvec
 void usertrap(void) {
+	DEBUG("here we are\n");
     int which_dev = 0;
     if ((r_sstatus() & SSTATUS_SPP) != 0) BUG("usertrap: not from user mode");
     // 由于中断处理过程可能仍然被中断，所以设置中断处理向量为 kernelvec（内核态处理）
@@ -120,5 +121,6 @@ void usertrapret() {
 	// and switches to user mode with sret
 
 	uint64 fn = TRAMPOLINE + (usertrap2 - trampoline);
-	((void (*)(uint64,uint64))fn)(TRAPFRAME + t -> ord * sizeof(struct trapframe), satp);
+
+	((void (*)(uint64, uint64))fn)(TRAPFRAME + t -> ord * sizeof(struct trapframe), satp);
 }

@@ -32,15 +32,15 @@ static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
 	return pagetable + PX(0, va);
 }
 
+pte_t* _pt_query(pagetable_t pagetable, vaddr_t va) {return pt_query(pagetable, va, 0);}
+
 int pt_map_pages(pagetable_t pagetable, vaddr_t va, paddr_t pa, uint64 size, int perm){
 	// Suggested: 11 LoCs
 	vaddr_t current = PGROUNDDOWN(va), last = PGROUNDDOWN(va + size - 1);
-	for (pte_t *pte;;) {
+	for (pte_t *pte;current <= last;current += PGSIZE, pa += PGSIZE) {
 		if ((pte = pt_query(pagetable, current, 1)) == NULL) return -1;
 		if (*pte & PTE_V) BUG("remap");
 		*pte = PA2PTE(pa) | perm | PTE_V;
-		if (current == last) break;
-		current += PGSIZE, pa += PGSIZE;
 	}
 	return 0; // Do not modify
 }
@@ -49,14 +49,14 @@ paddr_t pt_query_address(pagetable_t pagetable, vaddr_t va){
 	// Suggested: 3 LoCs
 	pte_t *pte = pt_query(pagetable, va, 0);
 	if (pte == NULL || (*pte & PTE_V) == 0) {
-		FAIL_FMT("no mapping exists for 0x%lx", va);
+		DEBUG("no mapping exists for 0x%lx\n", va);
 		return NULL;
 	}
-	if ((*pte & PTE_U) == 0) {
-		FAIL("access denied");
+	/*if ((*pte & PTE_U) == 0) {
+		DEBUG("access denied\n");
 		return NULL;
-	}
-	return /* Return value here */ PTE2PA(*pte);
+	}*/
+	return /* Return value here */ PTE2PA(*pte) | (va & (PGSIZE - 1));
 }
 
 int pt_unmap_addrs(pagetable_t pagetable, vaddr_t va){
@@ -81,7 +81,7 @@ void pt_unmap_pages(pagetable_t pagetable, vaddr_t va, uint npages, bool do_free
 
 	for (vaddr_t current = va;current < va + npages * PGSIZE;current += PGSIZE) {
 		if ((pte = pt_query(pagetable, current, 0)) == 0 || (*pte & PTE_V) == 0)
-			FAIL_FMT("page at 0x%lx not found", current);
+			DEBUG("page at 0x%lx not found\n", current);
 		else {
 			if (PTE_FLAGS(*pte) == PTE_V) BUG_FMT("0x%lx is not a leaf", current);
 			if (do_free) mm_kfree((void *) PTE2PA(*pte));
@@ -139,6 +139,6 @@ void pt_free_pagetable(pagetable_t pagetable, uint64 sz) {
 
 void pt_clear_page(pagetable_t pagetable, vaddr_t va) {
 	pte_t *pte = pt_query(pagetable, va, 0);
-	if (pte == NULL) BUG_FMT("not a valid page to clear: 0x%lx", va);
+	if (pte == NULL) BUG_FMT("not a valid page to clear: 0x%lx\n", va);
 	*pte &= ~PTE_U;
 }

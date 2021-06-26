@@ -12,8 +12,7 @@ extern pagetable_t kernel_pagetable;
 
 
 void pt_init();
-void _pt_disp_vpn(paddr_t pa);
-
+pte_t* _pt_query(pagetable_t pagetable, vaddr_t va);
 
 void pt_kern_vmmap();
 int pt_map_pages(pagetable_t pagetable, vaddr_t va, paddr_t pa, uint64 size, int perm);

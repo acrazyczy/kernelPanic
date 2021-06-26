@@ -28,7 +28,7 @@ void sys_exit(int value){
 
 void sys_yield(){
 	asm volatile(
-		"li a7, %0\n\tecall"
+		"mv a7, %0\n\tecall"
         ::"r"(SYS_YIELD)
 	);
 }

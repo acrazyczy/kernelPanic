@@ -3,6 +3,7 @@
 #include "pagetable.h"
 #include "memlayout.h"
 #include "elf.h"
+#include "defs.h"
 
 extern const char binary_putc_start;
 extern char trampoline[];
@@ -161,7 +162,6 @@ thread_t *select_thr() {
 
 thread_t *alloc_thr() {
 	thread_t *t = select_thr(); // to do: alloc t
-	acquire(&t -> lock);
 	t -> thread_state = RUNNABLE;
 	t -> tid = alloc_tid();
 	memset(&t -> context, 0, sizeof(t -> context));
@@ -174,11 +174,12 @@ pagetable_t proc_pagetable(process_t *p) {
 	pagetable_t pagetable;
 	if ((pagetable = (pagetable_t) mm_kalloc()) == NULL) return NULL;
 	memset(pagetable, 0, PGSIZE);
-	if ((~pt_map_pages(pagetable, TRAMPOLINE, PGSIZE, (uint64) trampoline, PTE_R | PTE_X)) == 0) {
+	if ((~pt_map_pages(pagetable, TRAMPOLINE, (paddr_t) trampoline, PGSIZE, PTE_R | PTE_X)) == 0) {
 		pt_free_pagetable(pagetable, 0);
 		return NULL;
+
 	}
-	if ((~pt_map_pages(pagetable, TRAPFRAME, PGSIZE, (uint64) p -> trapframes, PTE_R | PTE_W)) == 0) {
+	if ((~pt_map_pages(pagetable, TRAPFRAME, (paddr_t) p -> trapframes, PGSIZE, PTE_R | PTE_W)) == 0) {
 		pt_unmap_pages(pagetable, TRAMPOLINE, 1, false);
 		pt_free_pagetable(pagetable, 0);
 		return NULL;
@@ -205,10 +206,9 @@ bool load_thread(file_type_t type){
     if(type == PUTC) {
         process_t *p = alloc_proc(&binary_putc_start);
 	    thread_t *t = container_of(p -> thread_list.next, thread_t, process_list_thread_node);
+	    release(&p -> lock), release(&t -> lock);
         if(!t) return false;
-	    acquire(&schedlock);
         sched_enqueue(t);
-	    release(&schedlock);
         return true;
     } else {
         BUG("Not supported");
@@ -227,7 +227,7 @@ void sched_enqueue(thread_t *target_thread){
 
 thread_t *sched_dequeue(){
     if(list_empty(&(sched_list[cpuid()]))) BUG("Scheduler List is empty");
-    thread_t *head = container_of(&(sched_list[cpuid()]), thread_t, sched_list_thread_node);
+    thread_t *head = container_of(sched_list[cpuid()].prev, thread_t, sched_list_thread_node);
     list_del(&head->sched_list_thread_node);
     return head;
 }
@@ -245,7 +245,6 @@ void thread_run(thread_t *t){
 	intr_on();
 
 	acquire(&t -> lock);
-	ASSERT_EQ(t -> thread_state, RUNNABLE, "unrunnable thread found in sched_list");
 	t -> thread_state = RUNNING;
 	acquire(&t -> process -> lock);
 	if (t -> process -> running_threads ++)
@@ -270,31 +269,31 @@ void sched_start(){
 
 void sched_init(){
     // 初始化调度队列锁
-    lock_init(&schedlock);
+    lock_init(&schedlock, "schedlock");
     // 初始化队列头
     init_list_head(&(sched_list[cpuid()]));
 }
 
 void proc_init(){
     // 初始化pid、tid锁
-    lock_init(&pidlock), _pid = 0;
-    lock_init(&tidlock), _tid = 0;
+    lock_init(&pidlock, "pidlock"), _pid = 0;
+    lock_init(&tidlock, "tidlock"), _tid = 0;
+	for (process_t *p = procs;p < procs + NPROC;++ p) {
+		lock_init(&p -> lock, "process_lock");
+		p -> process_state = UNUSED;
+		p -> running_threads = 0;
+		p -> allocated_threads = 0;
+		init_list_head(&p -> thread_list);
+	}
+	for (thread_t *t = thrs;t < thrs + NTHR;++ t) {
+		lock_init(&t -> lock, "thread_lock");
+		t -> thread_state = UNUSED;
+		t -> kstack = KSTACK((uint) (t - thrs));
+		init_list_head(&t -> process_list_thread_node);
+		init_list_head(&t -> sched_list_thread_node);
+	}
     // 接下来代码期望的目的：映射第一个用户线程并且插入调度队列
     if(!load_thread(PUTC)) BUG("Load failed");
-    for (process_t *p = procs;p < procs + NPROC;++ p) {
-	    lock_init(&p -> lock);
-	    p -> process_state = UNUSED;
-	    p -> running_threads = 0;
-	    p -> allocated_threads = 0;
-	    init_list_head(&p -> thread_list);
-    }
-    for (thread_t *t = thrs;t < thrs + NTHR;++ t) {
-    	lock_init(&t -> lock);
-    	t -> thread_state = UNUSED;
-    	t -> kstack = KSTACK((uint) (t - thrs));
-	    init_list_head(&t -> process_list_thread_node);
-	    init_list_head(&t -> sched_list_thread_node);
-    }
 }
 
 cpu_t *mycpu() {return CPUs + cpuid();}

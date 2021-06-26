@@ -15,10 +15,12 @@
 struct lock{
     uint locked;
     uint cpuid;
+
+    char *name;
 };
 
 // lock interface
-int lock_init(struct lock *lock);
+int lock_init(struct lock *lock, char *name);
 void acquire(struct lock *lock);
 int try_acquire(struct lock *lock);
 void release(struct lock *lock);

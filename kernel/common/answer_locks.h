@@ -29,18 +29,19 @@ void pop_off()
 		intr_on();
 }
 
-int lock_init(struct lock *lock){
+int lock_init(struct lock *lock, char *name){
 	/* Your code here */
 	lock -> locked = 0, lock -> cpuid = -1;
 	if(nlock >= MAXLOCKS) BUG("Max lock count reached.");
-	locks[nlock++] = lock;
+	locks[nlock ++] = lock;
+	lock -> name = name;
 	return 0;
 }
 
 void acquire(struct lock *lock){
 	/* Your code here */
 	push_off();
-	if (holding_lock(lock)) BUG("The lock is already held.");
+	if (holding_lock(lock)) BUG_FMT("The lock %s is already held.", lock -> name);
 	while (__sync_lock_test_and_set(&lock -> locked, 1));
 	__sync_synchronize();
 	lock -> cpuid = cpuid();
@@ -50,7 +51,7 @@ void acquire(struct lock *lock){
 // Return 0 if succeed, -1 if failed.
 int try_acquire(struct lock *lock){
 	/* Your code here */
-	if (holding_lock(lock)) BUG("The lock is already held.");
+	if (holding_lock(lock)) BUG_FMT("The lock %s is already held.", lock -> name);
 	if (!__sync_lock_test_and_set(&lock -> locked, 1)) {
 		__sync_synchronize();
 		lock -> cpuid = cpuid();
@@ -64,7 +65,7 @@ void release(struct lock* lock){
 		lock -> cpuid = -1;
 		__sync_synchronize();
 		__sync_lock_release(&lock -> locked);
-	} else BUG("The lock isn't held by current processor.");
+	} else BUG_FMT("The lock %s isn't held by current processor.", lock -> name);
 }
 
 int is_locked(struct lock* lock){
