@@ -179,6 +179,9 @@ struct list {
     struct list *prev;
 };
 
+// trap.c
+void usertrapret();
+
 // swtch.S
 
 struct context;

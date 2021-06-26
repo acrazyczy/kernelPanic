@@ -136,3 +136,9 @@ void pt_free_pagetable(pagetable_t pagetable, uint64 sz) {
 	if (sz > 0) pt_unmap_pages(pagetable, 0, PGROUNDUP(sz) / PGSIZE, true);
 	pt_free(pagetable);
 }
+
+void pt_clear_page(pagetable_t pagetable, vaddr_t va) {
+	pte_t *pte = pt_query(pagetable, va, 0);
+	if (pte == NULL) BUG_FMT("not a valid page to clear: 0x%lx", va);
+	*pte &= ~PTE_U;
+}

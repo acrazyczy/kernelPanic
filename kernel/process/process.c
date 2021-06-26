@@ -2,7 +2,6 @@
 #include "lock.h"
 #include "pagetable.h"
 #include "memlayout.h"
-#include "trap.c"
 #include "elf.h"
 
 extern const char binary_putc_start;
@@ -20,11 +19,10 @@ static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uin
 
 // 将ELF文件映射到给定页表的地址空间，返回pc的数值
 // 关于 ELF 文件，请参考：https://docs.oracle.com/cd/E19683-01/816-1386/chapter6-83432/index.html
-static uint64 load_binary(pagetable_t *target_page_table, const char *bin, thread_t *t){
+static uint64 load_binary(pagetable_t target_page_table, const char *bin, process_t *p) {
 	struct elf_file *elf;
     int i;
-    uint64 seg_sz, p_vaddr, seg_map_sz, current_sz = t -> process -> sz;
-    t -> sz = 0;
+    uint64 seg_sz, p_vaddr, seg_map_sz, current_sz = 0;
 	elf = elf_parse_file(bin);
 	
 	/* load each segment in the elf binary */
@@ -45,18 +43,17 @@ static uint64 load_binary(pagetable_t *target_page_table, const char *bin, threa
              * 页表映射修改
              */
             if (seg_sz < elf -> p_headers[i].p_filesz || p_vaddr % PGSIZE != 0) goto bad;
-            if (t -> sz < p_vaddr + seg_sz) t -> sz = p_vaddr + seg_sz;
             uint64 new_sz = pt_alloc_pages(target_page_table, current_sz, p_vaddr + seg_sz);
             if (new_sz == 0) goto bad;
             current_sz = new_sz;
             load_segment(target_page_table, p_vaddr, bin, elf -> p_headers[i].p_offset, elf -> p_headers[i].p_filesz);
 		}
 	}
-	t -> process -> sz = current_sz;
+	p -> sz = current_sz;
 	/* PC: the entry point */
 	return elf -> header.e_entry;
 	bad:
-	pt_dealloc_pages(target_page_table, current_sz, t -> process -> sz);
+	pt_free_pagetable(target_page_table, current_sz);
 	return 0;
 }
 
@@ -65,7 +62,7 @@ static void load_segment(pagetable_t pagetable, vaddr_t va, const char *bin, uin
 		paddr_t pa = pt_query_address(pagetable, va + i);
 		if (pa == NULL) BUG_FMT("loadseg: invalid address 0x%lx", va + i);
 		uint64 load_sz = sz - i < PGSIZE ? sz - i : PGSIZE;
-		memcpy(pa, bin + offset + i, load_sz);
+		memcpy((void *)pa, bin + offset + i, load_sz);
 	}
 }
 
@@ -91,7 +88,7 @@ static int alloc_pid() {
 process_t *select_proc() {
 	for (process_t *p = procs;p < procs + NPROC;++ p) {
 		acquire(&p -> lock);
-		if (p -> allocated_threads != (1 << NTHRPERPROC) - 1) return p;
+		if (p -> process_state == UNUSED) return p;
 		release(&p -> lock);
 	}
 	return NULL;
@@ -100,56 +97,41 @@ process_t *select_proc() {
 process_t *alloc_proc(const char* bin){
 	process_t *p = select_proc(); // to do: alloc p and acquire lock
 	if (p == NULL) return NULL;
-	if (p -> process_state == UNUSED) {
-		p -> pid = alloc_pid();
-		if ((p -> trapframes = mm_kalloc()) == NULL) {
-			free_proc(p);
-			release(&p -> lock);
-			return NULL;
-		}
-		if ((p -> pagetable = proc_pagetable(p)) == NULL) {
-			free_proc(p);
-			release(&p -> lock);
-			return NULL;
-		}
-		p -> maxsz = PGSIZE * 16;
-		p -> sz = 0;
-		bool succeeded = true;
-		for (uint i = 0;i < NTHRPERPROC && succeeded;++ i) {
-			void *mem = mm_kalloc();
-			if (mem == NULL) succeeded = false;
-			else {
-				pt_map_pages(p -> pagetable, PGSIZE * (15 - (i << 1)), mem, PGSIZE, PTE_W | PTE_R | PTE_X | PTE_U);
-				mem = mm_kalloc();
-				if (mem == NULL) succeeded = false;
-				else pt_map_pages(p -> pagetable, PGSIZE * (14 - (i << 1)), mem, PGSIZE, PTE_W | PTE_R | PTE_X | PTE_U);
-			}
-		}
-		if (!succeeded) {
-			free_proc(p);
-			release(&p -> lock);
-			return NULL;
-		}
-	}
-	thread_t *t = alloc_thr(bin);
-	if (t == NULL && p -> process_state == UNUSED) {
+	p -> pid = alloc_pid();
+	if ((p -> trapframes = mm_kalloc()) == NULL) {
 		free_proc(p);
 		release(&p -> lock);
 		return NULL;
 	}
-	if (p -> process_state == UNUSED) p -> process_state = RUNNABLE;
-	t -> process = p;
-	for (t -> ord = 0; p -> allocated_threads >> t -> ord & 1; ++ t -> ord);
-	t -> trapframe = p -> trapframes + t -> ord * sizeof(struct trapframe);
-	p -> allocated_threads |= 1 << t -> ord;
-	uint64 epc = load_binary(&p -> pagetable, bin, t);
+	if ((p -> pagetable = proc_pagetable(p)) == NULL) {
+		free_proc(p);
+		release(&p -> lock);
+		return NULL;
+	}
+	uint64 epc = load_binary(p -> pagetable, bin, p);
 	if (epc == 0) {
-		release(&t -> lock);
 		free_proc(p);
 		release(&p -> lock);
 		return NULL;
 	}
-	t -> trapframe -> sp =  p -> maxsz - (PGSIZE * t -> ord << 1);
+	uint64 sz = PGROUNDUP(p -> sz), newsz = pt_alloc_pages(p -> pagetable, sz, sz + (NTHRPERPROC * PGSIZE << 1));
+	if (newsz == 0) {
+		free_proc(p);
+		release(&p -> lock);
+		return NULL;
+	}
+	for (uint i = 1;i <= NTHRPERPROC;++ i) pt_clear_page(p -> pagetable, newsz - (i << 1) * PGSIZE);
+	p -> sz = newsz;
+	thread_t *t = alloc_thr(bin);
+	if (t == NULL) {
+		free_proc(p);
+		release(&p -> lock);
+		return NULL;
+	}
+	t -> process = p;
+	t -> ord = 0, p -> allocated_threads = 1;
+	t -> trapframe = p -> trapframes;
+	t -> trapframe -> sp =  p -> sz;
 	t -> trapframe -> epc = epc;
 	list_add(&t -> process_list_thread_node, &p -> thread_list);
     return p;
@@ -255,10 +237,9 @@ bool sched_empty(){
 }
 
 // 开始运行某个特定的函数
-void thread_run(thread_t *target){
-	thread_t *t;
+void thread_run(thread_t *t){
 	cpu_t *c = mycpu();
-	uint cid = (c - CPUs) / sizeof(cpu_t);
+	uint cid = c - CPUs;
 	running[cid] = NULL;
 
 	intr_on();

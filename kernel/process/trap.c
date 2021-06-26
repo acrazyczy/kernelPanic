@@ -19,16 +19,13 @@ void trap_init_vec(){
 // 真实的 syscall 处理过程
 // 根据你在 user/stdlib.h 中的 syscall 操作在这里对应地寻找目标
 void syscall(){
-	uint num;
-	asm volatile("mv %0, a7":"=r"(num)::"memory");
+	uint num = mythread() -> trapframe -> a7;
 	if (num == SYS_YIELD) yield();
 	else if (num == SYS_PUTC) {
-		char val;
-		asm volatile("mv %0, a0":"=r"(val)::"memory");
+		char val = mythread() -> trapframe -> a0;
 		uart_putc(val);
 	} else if (num == SYS_EXIT) {
-		int value;
-		asm volatile("mv %0, a0":"=r"(value)::"memory");
+		int value = mythread() -> trapframe -> a0;
 		exit(value);
 	} else BUG_FMT("unsupported syscall number: %u", num);
 }

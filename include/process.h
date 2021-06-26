@@ -9,7 +9,7 @@
 #include <lock.h>
 #include <pagetable.h>
 
-typedef struct trapframe {
+struct trapframe {
 	/*    0 */ uint64 kernel_satp;      // kernel page table
 	/*    8 */ uint64 kernel_sp;        // top of thread's kernel stack
 	/*   16 */ uint64 kernel_trap;      // usertrap()
@@ -48,7 +48,7 @@ typedef struct trapframe {
 	/*  280 */ uint64 t6;
 };
 
-typedef struct context {
+struct context {
 	uint64 ra;
 	uint64 sp;
 
@@ -83,7 +83,6 @@ typedef struct process {
 	uint running_threads;
 	uint allocated_threads;
 
-	uint64 maxsz;
 	uint64 sz;
 	void *trapframes;
 
@@ -107,7 +106,6 @@ typedef struct thread {
 	process_t *process;
 
 	uint64 kstack;
-	uint64 sz;
 	uint64 ord;
 	struct trapframe *trapframe;
 	struct context context;
