@@ -72,6 +72,7 @@ int pt_map_addrs(pagetable_t pagetable, vaddr_t va, paddr_t pa, int perm){
 	// Suggested: 2 LoCs
 	pte_t *pte = pt_query(pagetable, va, 1);
 	if (pte == NULL) return -1;
+	if (*pte & PTE_V) BUG("remap");
 	*pte = PA2PTE(pa) | perm | PTE_V;
 	return 0; // Do not modify
 }
@@ -111,7 +112,7 @@ uint64 pt_alloc_pages(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
 			return 0;
 		}
 		memset(mem, 0, PGSIZE);
-		if (pt_map_pages(pagetable, current, (uint64) mem, PGSIZE, PTE_W | PTE_X | PTE_R | PTE_U) != 0) {
+		if (pt_map_pages(pagetable, current, (uint64) mem, PGSIZE, PTE_W | PTE_R | PTE_X | PTE_U) != 0) {
 			mm_kfree(mem);
 			pt_dealloc_pages(pagetable, current, oldsz);
 			return 0;
@@ -140,5 +141,5 @@ void pt_free_pagetable(pagetable_t pagetable, uint64 sz) {
 void pt_clear_page(pagetable_t pagetable, vaddr_t va) {
 	pte_t *pte = pt_query(pagetable, va, 0);
 	if (pte == NULL) BUG_FMT("not a valid page to clear: 0x%lx\n", va);
-	*pte &= ~PTE_U;
+//	*pte &= ~PTE_U;
 }

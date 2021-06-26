@@ -32,7 +32,6 @@ void syscall(){
 
 // 用户态的trap处理函数，内核态请参考 kernel/boot/start.c 中的 kernelvec
 void usertrap(void) {
-	DEBUG("here we are\n");
     int which_dev = 0;
     if ((r_sstatus() & SSTATUS_SPP) != 0) BUG("usertrap: not from user mode");
     // 由于中断处理过程可能仍然被中断，所以设置中断处理向量为 kernelvec（内核态处理）
@@ -99,7 +98,7 @@ void usertrapret() {
 	// set up trapframe values that uservec will need when re-entering the kernel
 	t -> trapframe -> kernel_satp = r_satp();
 	t -> trapframe -> kernel_sp = t -> kstack + PGSIZE;
-	t -> trapframe -> kernel_trap = (uint64) usertrap1;
+	t -> trapframe -> kernel_trap = (uint64) usertrap;
 	t -> trapframe -> kernel_hartid = r_tp();
 
 	// set up the registers that tramp.S's sret will use to get to user space.
